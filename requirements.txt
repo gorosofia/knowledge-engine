@@ -1,0 +1,20 @@
+# Procesamiento de documentos
+pypdf>=3.0.0
+markdown>=3.4.0
+
+# Embeddings y base de datos vectorial
+sentence-transformers>=2.2.0
+chromadb>=0.4.0
+
+# API de DeepSeek (usa el SDK de OpenAI, compatible con DeepSeek)
+openai>=1.0.0
+
+# Variables de entorno
+python-dotenv>=1.0.0
+
+# Servidor MCP (protocolo para agentes)
+mcp>=1.0.0
+
+# Utilidades
+numpy>=1.24.0
+tqdm>=4.65.0
