@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 import chromadb
-from sentence_transformers import SentenceTransformer
+import requests
 from pypdf import PdfReader
 import hashlib
 
@@ -17,9 +17,21 @@ load_dotenv()
 
 DOCS_DIR = Path(os.getenv("DOCS_DIR", "../knowledge-vault"))
 CHROMA_DB_PATH = Path(os.getenv("CHROMA_DB_PATH", "./chroma_db"))
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 1000))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 200))
+
+
+def get_ollama_embedding(text: str) -> list[float]:
+    response = requests.post(
+        f"{OLLAMA_URL}/api/embeddings",
+        json={"model": OLLAMA_EMBEDDING_MODEL, "prompt": text},
+        timeout=120,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return payload.get("embedding", [])
 
 
 def extract_text(file_path: Path) -> str:
@@ -61,13 +73,11 @@ def main():
         print(f"❌ Error: La carpeta {DOCS_DIR} no existe.")
         sys.exit(1)
     
-    print(f"🧠 Cargando modelo de embeddings ({EMBEDDING_MODEL})...")
-    print("   (La primera vez descarga ~2GB. Las siguientes usan caché.)")
+    print(f"🧠 Usando embeddings locales por Ollama: {OLLAMA_EMBEDDING_MODEL}")
     try:
-        embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+        requests.get(f"{OLLAMA_URL}/api/tags", timeout=5).raise_for_status()
     except Exception as e:
-        print(f"❌ Error cargando el modelo: {e}")
-        print("   ¿Tienes conexión a internet? El modelo se descarga la primera vez.")
+        print(f"❌ No se pudo conectar a Ollama ({OLLAMA_URL}): {e}")
         sys.exit(1)
     
     print(f"💾 Inicializando base de datos vectorial en: {CHROMA_DB_PATH.resolve()}")
@@ -116,8 +126,11 @@ def main():
         print("❌ No se extrajo texto de ningún archivo.")
         sys.exit(1)
     
-    print(f"🔍 Generando embeddings para {len(documents)} fragmentos (local, sin coste)...")
-    embeddings = embedding_model.encode(documents, show_progress_bar=True).tolist()
+    print(f"🔍 Generando embeddings para {len(documents)} fragmentos (Ollama local)...")
+    embeddings = []
+    for i, document in enumerate(documents, 1):
+        print(f"   - Fragmento {i}/{len(documents)}")
+        embeddings.append(get_ollama_embedding(document))
     
     print("💾 Almacenando en ChromaDB...")
     collection.add(

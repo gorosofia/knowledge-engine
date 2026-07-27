@@ -2,8 +2,8 @@
 pypdf>=3.0.0
 markdown>=3.4.0
 
-# Embeddings locales (gratis, sin depender de API de DeepSeek)
-sentence-transformers>=2.2.0
+# Embeddings locales vía Ollama
+requests>=2.31.0
 
 # Base de datos vectorial local
 chromadb>=0.4.0

@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 from dotenv import load_dotenv
 import asyncio
+import requests
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,24 +27,21 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 import chromadb
-from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 
-# Configuración
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 DEEPSEEK_MAX_TOKENS = int(os.getenv("DEEPSEEK_MAX_TOKENS", 1024))
 DEEPSEEK_TEMPERATURE = float(os.getenv("DEEPSEEK_TEMPERATURE", 0))
 CHROMA_DB_PATH = Path(os.getenv("CHROMA_DB_PATH", "./chroma_db"))
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 N_RESULTS = int(os.getenv("N_RESULTS", 8))
 
-# Inicialización
 logger.info("Iniciando Knowledge Engine MCP Server...")
 
 try:
-    embedding_model = SentenceTransformer(EMBEDDING_MODEL)
     chroma_client = chromadb.PersistentClient(path=str(CHROMA_DB_PATH))
     collection = chroma_client.get_or_create_collection(
         name="knowledge_base",
@@ -94,37 +92,44 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             type="text",
             text=f"Error: Herramienta desconocida '{name}'. Disponible: search_knowledge"
         )]
-    
+
     query = arguments.get("query", "")
     n_results = arguments.get("n_results", 8)
-    
+
     if not query:
         return [TextContent(type="text", text="Error: El parámetro 'query' es requerido.")]
-    
+
     try:
         logger.info(f"Consulta recibida: {query}")
-        
-        query_embedding = embedding_model.encode([query]).tolist()
+
+        query_embedding_response = requests.post(
+            f"{OLLAMA_URL}/api/embeddings",
+            json={"model": OLLAMA_EMBEDDING_MODEL, "prompt": query},
+            timeout=120,
+        )
+        query_embedding_response.raise_for_status()
+        query_embedding = [query_embedding_response.json()["embedding"]]
+
         results = collection.query(
             query_embeddings=query_embedding,
             n_results=min(n_results, N_RESULTS),
             include=["documents", "metadatas"]
         )
-        
+
         if not results["documents"] or not results["documents"][0]:
             return [TextContent(
                 type="text",
                 text="No se encontró información relevante en la base de conocimiento."
             )]
-        
+
         context_parts = []
         for i, doc in enumerate(results["documents"][0]):
             metadata = results["metadatas"][0][i]
             source = metadata.get("source", "desconocido")
             context_parts.append(f"[Fuente: {source}]\n{doc}")
-        
+
         context = "\n\n---\n\n".join(context_parts)
-        
+
         response = ai_client.chat.completions.create(
             model=DEEPSEEK_MODEL,
             max_tokens=DEEPSEEK_MAX_TOKENS,
@@ -143,11 +148,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 }
             ]
         )
-        
+
         answer = response.choices[0].message.content
         logger.info(f"Respuesta generada ({len(answer)} caracteres)")
         return [TextContent(type="text", text=answer)]
-    
+
     except Exception as e:
         logger.error(f"Error en search_knowledge: {e}", exc_info=True)
         return [TextContent(type="text", text=f"Error interno: {str(e)}")]

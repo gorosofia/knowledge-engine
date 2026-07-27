@@ -13,19 +13,19 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 import chromadb
-from sentence_transformers import SentenceTransformer
+import requests
 from openai import OpenAI
 
 load_dotenv()
 
-# Configuración
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 DEEPSEEK_MAX_TOKENS = int(os.getenv("DEEPSEEK_MAX_TOKENS", 1024))
 DEEPSEEK_TEMPERATURE = float(os.getenv("DEEPSEEK_TEMPERATURE", 0))
 CHROMA_DB_PATH = Path(os.getenv("CHROMA_DB_PATH", "./chroma_db"))
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 N_RESULTS = int(os.getenv("N_RESULTS", 8))
 
 
@@ -49,14 +49,24 @@ def main():
     
     print("🔍 Buscando información relevante...")
     try:
-        embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+        ai_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
         client = chromadb.PersistentClient(path=str(CHROMA_DB_PATH))
         collection = client.get_collection("knowledge_base")
     except Exception as e:
         print(f"❌ Error cargando componentes: {e}")
         sys.exit(1)
     
-    query_embedding = embedding_model.encode([query]).tolist()
+    try:
+        query_embedding_response = requests.post(
+            f"{OLLAMA_URL}/api/embeddings",
+            json={"model": OLLAMA_EMBEDDING_MODEL, "prompt": query},
+            timeout=120,
+        )
+        query_embedding_response.raise_for_status()
+        query_embedding = [query_embedding_response.json()["embedding"]]
+    except Exception as e:
+        print(f"❌ Error generando embedding de la consulta: {e}")
+        sys.exit(1)
     results = collection.query(
         query_embeddings=query_embedding,
         n_results=N_RESULTS,
