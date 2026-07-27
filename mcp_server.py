@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-Servidor MCP (Model Context Protocol) para Knowledge Engine.
-Expone la herramienta 'search_knowledge' para que agentes externos 
-(Claude Code, Cursor, etc.) consulten tu base de conocimiento.
+Servidor MCP para Knowledge Engine.
+Expone 'search_knowledge' para que agentes externos consulten tu base de conocimiento.
 
-Transporte: stdio (estándar para clientes MCP locales)
+Transporte: stdio
 """
 
 import os
@@ -14,7 +13,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 import asyncio
 
-# Logging a stderr para no ensuciar el stdout (protocolo MCP)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -24,7 +22,6 @@ logger = logging.getLogger("knowledge-engine")
 
 load_dotenv()
 
-# Importaciones de terceros
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
@@ -32,19 +29,17 @@ import chromadb
 from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 
-# ──────────────────────────────────────────────
 # Configuración
-# ──────────────────────────────────────────────
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+DEEPSEEK_MAX_TOKENS = int(os.getenv("DEEPSEEK_MAX_TOKENS", 1024))
+DEEPSEEK_TEMPERATURE = float(os.getenv("DEEPSEEK_TEMPERATURE", 0))
 CHROMA_DB_PATH = Path(os.getenv("CHROMA_DB_PATH", "./chroma_db"))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
-N_RESULTS = int(os.getenv("N_RESULTS", 5))
+N_RESULTS = int(os.getenv("N_RESULTS", 8))
 
-# ──────────────────────────────────────────────
-# Inicialización de componentes (una sola vez)
-# ──────────────────────────────────────────────
+# Inicialización
 logger.info("Iniciando Knowledge Engine MCP Server...")
 
 try:
@@ -60,23 +55,18 @@ except Exception as e:
     logger.error(f"Error durante la inicialización: {e}")
     sys.exit(1)
 
-# ──────────────────────────────────────────────
-# Definición del servidor MCP
-# ──────────────────────────────────────────────
 app = Server("knowledge-engine")
 
 
 @app.list_tools()
 async def list_tools() -> list[Tool]:
-    """Lista las herramientas que ofrece este servidor."""
     return [
         Tool(
             name="search_knowledge",
             description=(
-                "Busca información en la base de conocimiento personal (notas de Obsidian indexadas) "
+                "Busca información en la base de conocimiento personal (notas de Obsidian) "
                 "y devuelve una respuesta generada con DeepSeek. "
-                "Usa esta herramienta cuando necesites responder preguntas sobre tus notas, "
-                "documentos o cualquier conocimiento que hayas indexado previamente."
+                "Úsala cuando necesites responder preguntas sobre tus notas o documentos."
             ),
             inputSchema={
                 "type": "object",
@@ -87,8 +77,8 @@ async def list_tools() -> list[Tool]:
                     },
                     "n_results": {
                         "type": "integer",
-                        "description": "Número máximo de fragmentos a recuperar (predeterminado: 5)",
-                        "default": 5
+                        "description": "Número máximo de fragmentos a recuperar (predeterminado: 8)",
+                        "default": 8
                     }
                 },
                 "required": ["query"]
@@ -99,7 +89,6 @@ async def list_tools() -> list[Tool]:
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    """Ejecuta la herramienta solicitada."""
     if name != "search_knowledge":
         return [TextContent(
             type="text",
@@ -107,7 +96,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         )]
     
     query = arguments.get("query", "")
-    n_results = arguments.get("n_results", 5)
+    n_results = arguments.get("n_results", 8)
     
     if not query:
         return [TextContent(type="text", text="Error: El parámetro 'query' es requerido.")]
@@ -115,10 +104,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     try:
         logger.info(f"Consulta recibida: {query}")
         
-        # 1. Generar embedding de la consulta
         query_embedding = embedding_model.encode([query]).tolist()
-        
-        # 2. Buscar en ChromaDB
         results = collection.query(
             query_embeddings=query_embedding,
             n_results=min(n_results, N_RESULTS),
@@ -131,7 +117,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 text="No se encontró información relevante en la base de conocimiento."
             )]
         
-        # 3. Construir contexto
         context_parts = []
         for i, doc in enumerate(results["documents"][0]):
             metadata = results["metadatas"][0][i]
@@ -140,23 +125,23 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         
         context = "\n\n---\n\n".join(context_parts)
         
-        # 4. Generar respuesta con DeepSeek
         response = ai_client.chat.completions.create(
             model=DEEPSEEK_MODEL,
+            max_tokens=DEEPSEEK_MAX_TOKENS,
+            temperature=DEEPSEEK_TEMPERATURE,
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "Eres un asistente de investigación. Responde basándote ÚNICAMENTE en el contexto "
-                        "proporcionado. Si no sabes la respuesta, dilo claramente. Cita las fuentes."
+                        "Asistente de investigación. Responde SOLO con el contexto proporcionado. "
+                        "Si no sabes la respuesta, dilo. Cita fuentes entre [corchetes]."
                     )
                 },
                 {
                     "role": "user",
                     "content": f"Contexto:\n{context}\n\nPregunta: {query}"
                 }
-            ],
-            temperature=0.3
+            ]
         )
         
         answer = response.choices[0].message.content
@@ -169,7 +154,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 
 async def main():
-    """Punto de entrada: ejecuta el servidor MCP por stdio."""
     async with stdio_server() as (read_stream, write_stream):
         await app.run(
             read_stream,

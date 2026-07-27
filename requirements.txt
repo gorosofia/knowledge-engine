@@ -2,17 +2,19 @@
 pypdf>=3.0.0
 markdown>=3.4.0
 
-# Embeddings y base de datos vectorial
+# Embeddings locales (gratis, sin depender de API de DeepSeek)
 sentence-transformers>=2.2.0
+
+# Base de datos vectorial local
 chromadb>=0.4.0
 
-# API de DeepSeek (usa el SDK de OpenAI, compatible con DeepSeek)
+# API de DeepSeek (compatible con OpenAI)
 openai>=1.0.0
 
 # Variables de entorno
 python-dotenv>=1.0.0
 
-# Servidor MCP (protocolo para agentes)
+# Servidor MCP
 mcp>=1.0.0
 
 # Utilidades

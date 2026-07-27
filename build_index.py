@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Indexa documentos (txt, md, pdf) en ChromaDB usando embeddings de BAAI/bge-m3.
-Los documentos se leen de DOCS_DIR (por defecto: ../knowledge-vault).
+Indexa documentos (txt, md, pdf) en ChromaDB usando embeddings locales de BAAI/bge-m3.
+Los embeddings se generan en tu máquina, por lo que no hay coste de API.
 """
 
 import os
@@ -15,7 +15,6 @@ import hashlib
 
 load_dotenv()
 
-# Configuración desde variables de entorno
 DOCS_DIR = Path(os.getenv("DOCS_DIR", "../knowledge-vault"))
 CHROMA_DB_PATH = Path(os.getenv("CHROMA_DB_PATH", "./chroma_db"))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
@@ -24,7 +23,6 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 200))
 
 
 def extract_text(file_path: Path) -> str:
-    """Extrae texto plano de archivos .txt, .md o .pdf."""
     suffix = file_path.suffix.lower()
     try:
         if suffix in (".txt", ".md"):
@@ -41,7 +39,6 @@ def extract_text(file_path: Path) -> str:
 
 
 def chunk_text(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
-    """Divide el texto en fragmentos con superposición."""
     chunks = []
     start = 0
     while start < len(text):
@@ -54,7 +51,6 @@ def chunk_text(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
 
 
 def get_file_hash(file_path: Path) -> str:
-    """Hash MD5 del archivo para detectar cambios entre indexaciones."""
     return hashlib.md5(file_path.read_bytes()).hexdigest()
 
 
@@ -65,8 +61,8 @@ def main():
         print(f"❌ Error: La carpeta {DOCS_DIR} no existe.")
         sys.exit(1)
     
-    # 1. Cargar modelo de embeddings
     print(f"🧠 Cargando modelo de embeddings ({EMBEDDING_MODEL})...")
+    print("   (La primera vez descarga ~2GB. Las siguientes usan caché.)")
     try:
         embedding_model = SentenceTransformer(EMBEDDING_MODEL)
     except Exception as e:
@@ -74,7 +70,6 @@ def main():
         print("   ¿Tienes conexión a internet? El modelo se descarga la primera vez.")
         sys.exit(1)
     
-    # 2. Inicializar ChromaDB
     print(f"💾 Inicializando base de datos vectorial en: {CHROMA_DB_PATH.resolve()}")
     CHROMA_DB_PATH.mkdir(parents=True, exist_ok=True)
     client = chromadb.PersistentClient(path=str(CHROMA_DB_PATH))
@@ -83,7 +78,6 @@ def main():
         metadata={"hnsw:space": "cosine"}
     )
     
-    # 3. Descubrir archivos
     supported = {".txt", ".md", ".pdf"}
     files = sorted([
         f for f in DOCS_DIR.rglob("*")
@@ -96,7 +90,6 @@ def main():
     
     print(f"📄 Archivos encontrados: {len(files)}")
     
-    # 4. Procesar y fragmentar
     documents = []
     metadatas = []
     ids = []
@@ -123,11 +116,9 @@ def main():
         print("❌ No se extrajo texto de ningún archivo.")
         sys.exit(1)
     
-    # 5. Generar embeddings
-    print(f"🔍 Generando embeddings para {len(documents)} fragmentos...")
+    print(f"🔍 Generando embeddings para {len(documents)} fragmentos (local, sin coste)...")
     embeddings = embedding_model.encode(documents, show_progress_bar=True).tolist()
     
-    # 6. Guardar en ChromaDB
     print("💾 Almacenando en ChromaDB...")
     collection.add(
         documents=documents,

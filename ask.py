@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
 Consulta la base de conocimiento y genera una respuesta con DeepSeek.
+Optimizado para coste: usa deepseek-v4-flash, max_tokens limitado y temperatura 0.
+
 Uso:
     python ask.py "¿Qué es la inteligencia artificial?"
     echo "¿Qué es la IA?" | python ask.py
@@ -19,14 +21,15 @@ load_dotenv()
 # Configuración
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+DEEPSEEK_MAX_TOKENS = int(os.getenv("DEEPSEEK_MAX_TOKENS", 1024))
+DEEPSEEK_TEMPERATURE = float(os.getenv("DEEPSEEK_TEMPERATURE", 0))
 CHROMA_DB_PATH = Path(os.getenv("CHROMA_DB_PATH", "./chroma_db"))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
-N_RESULTS = int(os.getenv("N_RESULTS", 5))
+N_RESULTS = int(os.getenv("N_RESULTS", 8))
 
 
 def main():
-    # Obtener pregunta desde argumentos o stdin
     if len(sys.argv) > 1:
         query = " ".join(sys.argv[1:])
     else:
@@ -44,7 +47,6 @@ def main():
         print("❌ Error: DEEPSEEK_API_KEY no está configurada en el archivo .env")
         sys.exit(1)
     
-    # Cargar embedding y base de datos
     print("🔍 Buscando información relevante...")
     try:
         embedding_model = SentenceTransformer(EMBEDDING_MODEL)
@@ -54,7 +56,6 @@ def main():
         print(f"❌ Error cargando componentes: {e}")
         sys.exit(1)
     
-    # Buscar fragmentos similares
     query_embedding = embedding_model.encode([query]).tolist()
     results = collection.query(
         query_embeddings=query_embedding,
@@ -63,10 +64,9 @@ def main():
     )
     
     if not results["documents"] or not results["documents"][0]:
-        print("❌ No se encontró información relevante. Asegúrate de haber ejecutado build_index.py primero.")
+        print("❌ No se encontró información relevante. Ejecuta build_index.py primero.")
         sys.exit(0)
     
-    # Construir contexto
     context_parts = []
     for i, doc in enumerate(results["documents"][0]):
         metadata = results["metadatas"][0][i]
@@ -75,33 +75,30 @@ def main():
     
     context = "\n\n---\n\n".join(context_parts)
     
-    # Llamar a DeepSeek
     print("🤖 Generando respuesta con DeepSeek...")
     try:
         ai_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
         
         response = ai_client.chat.completions.create(
             model=DEEPSEEK_MODEL,
+            max_tokens=DEEPSEEK_MAX_TOKENS,
+            temperature=DEEPSEEK_TEMPERATURE,
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "Eres un asistente de investigación. Responde basándote ÚNICAMENTE en el contexto "
-                        "proporcionado. Si la información no está disponible, indícalo claramente. "
-                        "Cita las fuentes cuando sea posible."
+                        "Asistente de investigación. Responde SOLO con el contexto proporcionado. "
+                        "Si no sabes la respuesta, dilo. Cita fuentes entre [corchetes]."
                     )
                 },
                 {
                     "role": "user",
                     "content": f"Contexto:\n{context}\n\nPregunta: {query}"
                 }
-            ],
-            temperature=0.3
+            ]
         )
         
         answer = response.choices[0].message.content
-        
-        # Mostrar resultado
         print("\n" + "=" * 70)
         print(answer)
         print("=" * 70 + "\n")
