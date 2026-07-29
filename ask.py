@@ -25,8 +25,8 @@ DEEPSEEK_MAX_TOKENS = int(os.getenv("DEEPSEEK_MAX_TOKENS", 1024))
 DEEPSEEK_TEMPERATURE = float(os.getenv("DEEPSEEK_TEMPERATURE", 0))
 CHROMA_DB_PATH = Path(os.getenv("CHROMA_DB_PATH", "./chroma_db"))
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
-OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
-N_RESULTS = int(os.getenv("N_RESULTS", 8))
+OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "bge-m3")
+N_RESULTS = int(os.getenv("N_RESULTS", 24))
 
 
 def main():
@@ -69,7 +69,7 @@ def main():
         sys.exit(1)
     results = collection.query(
         query_embeddings=query_embedding,
-        n_results=N_RESULTS,
+        n_results=N_RESULTS * 2,
         include=["documents", "metadatas", "distances"]
     )
     
@@ -77,12 +77,32 @@ def main():
         print("❌ No se encontró información relevante. Ejecuta build_index.py primero.")
         sys.exit(0)
     
+    seen_sources: set[str] = set()
     context_parts = []
+    deduped_count = 0
+    
     for i, doc in enumerate(results["documents"][0]):
+        if len(context_parts) >= N_RESULTS:
+            break
         metadata = results["metadatas"][0][i]
         source = metadata.get("source", "desconocido")
-        context_parts.append(f"[Fuente: {source}]\n{doc}")
+        if source not in seen_sources:
+            seen_sources.add(source)
+            context_parts.append(f"[Fuente: {source}]\n{doc}")
+        else:
+            deduped_count += 1
     
+    for i, doc in enumerate(results["documents"][0]):
+        if len(context_parts) >= N_RESULTS * 2:
+            break
+        metadata = results["metadatas"][0][i]
+        source = metadata.get("source", "desconocido")
+        if source in seen_sources:
+            already_included = any(source in p for p in context_parts if p.startswith(f"[Fuente: {source}]"))
+            if not already_included:
+                context_parts.append(f"[Fuente: {source}]\n{doc}")
+    
+    print(f"   ({len(seen_sources)} fuentes únicas, {deduped_count} duplicados omitidos)")
     context = "\n\n---\n\n".join(context_parts)
     
     print("🤖 Generando respuesta con DeepSeek...")

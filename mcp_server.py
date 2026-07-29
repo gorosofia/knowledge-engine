@@ -36,8 +36,8 @@ DEEPSEEK_MAX_TOKENS = int(os.getenv("DEEPSEEK_MAX_TOKENS", 1024))
 DEEPSEEK_TEMPERATURE = float(os.getenv("DEEPSEEK_TEMPERATURE", 0))
 CHROMA_DB_PATH = Path(os.getenv("CHROMA_DB_PATH", "./chroma_db"))
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
-OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
-N_RESULTS = int(os.getenv("N_RESULTS", 8))
+OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "bge-m3")
+N_RESULTS = int(os.getenv("N_RESULTS", 24))
 
 logger.info("Iniciando Knowledge Engine MCP Server...")
 
@@ -112,7 +112,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         results = collection.query(
             query_embeddings=query_embedding,
-            n_results=min(n_results, N_RESULTS),
+            n_results=min(n_results * 2, N_RESULTS * 2),
             include=["documents", "metadatas"]
         )
 
@@ -122,11 +122,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 text="No se encontró información relevante en la base de conocimiento."
             )]
 
+        seen_sources: set[str] = set()
         context_parts = []
         for i, doc in enumerate(results["documents"][0]):
+            if len(context_parts) >= min(n_results, N_RESULTS):
+                break
             metadata = results["metadatas"][0][i]
             source = metadata.get("source", "desconocido")
-            context_parts.append(f"[Fuente: {source}]\n{doc}")
+            if source not in seen_sources:
+                seen_sources.add(source)
+                context_parts.append(f"[Fuente: {source}]\n{doc}")
 
         context = "\n\n---\n\n".join(context_parts)
 
